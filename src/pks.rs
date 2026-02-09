@@ -1,6 +1,10 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (C) 2026 KylinSoft Co., Ltd. <https://www.kylinos.cn/>
+// See LICENSES for license details.
+
 use mbedtls::{
-    Result,
     hash::{Md, Type},
+    Result,
 };
 
 const KYLINOS: &str = "www.kylinos.cn";

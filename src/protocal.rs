@@ -1,11 +1,17 @@
-use bincode::{Decode, Encode};
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (C) 2026 KylinSoft Co., Ltd. <https://www.kylinos.cn/>
+// See LICENSES for license details.
 
-#[derive(Encode, Decode)]
+#![allow(dead_code)]
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize)]
 pub enum TARequest {
     Register { uuid: String },
 }
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 pub enum TeeRequest {
     OpenSession {
         uuid: String,
@@ -25,7 +31,7 @@ pub enum TeeRequest {
     },
 }
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 pub enum TeeResponse {
     OpenSession { session_id: u32, result: u32 },
     CloseSession { result: u32 },
@@ -33,7 +39,7 @@ pub enum TeeResponse {
     RequestCancellation { result: u32 },
 }
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 pub struct Parameters(pub Parameter, pub Parameter, pub Parameter, pub Parameter);
 
 impl Parameters {
@@ -47,7 +53,7 @@ impl Parameters {
     }
 }
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 pub struct Parameter {
     pub raw: TEEParam,
     pub param_type: ParamType,
@@ -65,19 +71,19 @@ impl Parameter {
     }
 }
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 pub struct TEEParam {
     pub data: Vec<u8>,
     pub value: Value,
 }
 
-#[derive(Encode, Decode, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub struct Value {
     pub a: u32,
     pub b: u32,
 }
 
-#[derive(Encode, Decode)]
+#[derive(Serialize, Deserialize)]
 pub enum ParamType {
     None = 0,
     ValueInput = 1,

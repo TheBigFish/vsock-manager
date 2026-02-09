@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (C) 2026 KylinSoft Co., Ltd. <https://www.kylinos.cn/>
+// See LICENSES for license details.
+
 use std::{
     io::Read,
     os::unix::net::{UnixListener, UnixStream},
@@ -5,8 +9,8 @@ use std::{
     thread,
 };
 
-use bincode::config;
 use dashmap::DashSet;
+use postcard::from_bytes;
 
 use crate::protocal::TARequest;
 
@@ -46,7 +50,7 @@ pub fn handle_ta_request(
         return Ok(());
     }
 
-    let (req, _): (TARequest, usize) = bincode::decode_from_slice(&buf, config::standard())?;
+    let req: TARequest = from_bytes(&buf[..n])?;
     match req {
         TARequest::Register { uuid } => {
             registry.insert(uuid.clone());

@@ -1,9 +1,12 @@
-use std::io::{Read, Write};
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (C) 2026 KylinSoft Co., Ltd. <https://www.kylinos.cn/>
+// See LICENSES for license details.
+
+use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::Arc;
 use std::thread;
 
-use bincode::{config, decode_from_slice};
 use dashmap::DashSet;
 use mbedtls::error::codes;
 use mbedtls::rng::{CtrDrbg, OsEntropy};
@@ -12,7 +15,8 @@ use mbedtls::ssl::CipherSuite::{
 };
 use mbedtls::ssl::config::{Endpoint, Preset, Transport};
 use mbedtls::ssl::{Config, Context, Version};
-use vsock::{VMADDR_CID_ANY, VsockAddr, VsockListener, VsockStream};
+use postcard::from_bytes;
+use virga::server::{ServerConfig, ServerManager, VirgeServer};
 
 use crate::pks::{generate_psk, get_psk_identity};
 use crate::protocal::TeeRequest;
@@ -42,28 +46,27 @@ pub fn run_vsock_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
     config.set_psk(&psk, psk_identity)?;
     let rc_config = Arc::new(config);
 
-    let addr = VsockAddr::new(VMADDR_CID_ANY, VSOCK_PORT);
-    let listener = VsockListener::bind(&addr)?;
+    let config = ServerConfig::new(0xFFFFFFFF, VSOCK_PORT, CHUNK_SIZE as u32, false);
+    let mut manager = ServerManager::new(config);
+    manager.start()?;
 
-    for stream in listener.incoming() {
-        let stream = stream?;
+    loop {
+        let server = manager.accept()?;
         thread::spawn({
             let registry = registry.clone();
             let config = rc_config.clone();
             move || {
-                if let Err(e) = handle_vsock_request(stream, registry.clone(), config) {
+                if let Err(e) = handle_vsock_request(server, registry.clone(), config) {
                     eprintln!("Failed to handle vsock request: {:?}", e);
                 }
             }
         });
     }
-
-    Ok(())
 }
 
 pub fn handle_vsock_request(
-    stream: VsockStream,
-    registry: Arc<DashSet<String>>,
+    stream: VirgeServer,
+    _registry: Arc<DashSet<String>>,
     config: Arc<Config>,
 ) -> anyhow::Result<()> {
     let mut ctx = Context::new(config.clone());
@@ -77,7 +80,18 @@ pub fn handle_vsock_request(
             break;
         }
 
-        ctx.read_exact(&mut header)?;
+        if let Err(e) = ctx.read_exact(&mut header) {
+            match e.kind() {
+                ErrorKind::ConnectionReset | ErrorKind::UnexpectedEof => {
+                    println!("Vsock server connection closed");
+                    break;
+                }
+                _ => {
+                    println!("Vsock server read header failed: {e}");
+                    break;
+                }
+            }
+        }
 
         handle_packet(
             &mut ctx,
@@ -94,14 +108,14 @@ pub fn handle_vsock_request(
 }
 
 fn handle_packet(
-    ctx: &mut Context<VsockStream>,
+    ctx: &mut Context<VirgeServer>,
     header: PacketHeader,
     session_uuid: &mut Option<String>,
 ) -> anyhow::Result<()> {
     let mut data = vec![0u8; header.data_size as usize];
     recv_data(ctx, &mut data)?;
 
-    let (req, _): (TeeRequest, _) = decode_from_slice(&data, config::standard())?;
+    let req: TeeRequest = from_bytes(&data)?;
     let uuid = match req {
         TeeRequest::OpenSession { uuid, .. } => {
             *session_uuid = Some(uuid.clone());
@@ -129,7 +143,7 @@ fn handle_packet(
     Ok(())
 }
 
-fn recv_data(ctx: &mut Context<VsockStream>, data: &mut [u8]) -> mbedtls::Result<()> {
+fn recv_data(ctx: &mut Context<VirgeServer>, data: &mut [u8]) -> mbedtls::Result<()> {
     let total = data.len();
     let chunk_size = CHUNK_SIZE as usize;
 
@@ -152,7 +166,7 @@ fn recv_data(ctx: &mut Context<VsockStream>, data: &mut [u8]) -> mbedtls::Result
     Ok(())
 }
 
-fn send_data(ctx: &mut Context<VsockStream>, data: &[u8]) -> mbedtls::Result<()> {
+fn send_data(ctx: &mut Context<VirgeServer>, data: &[u8]) -> mbedtls::Result<()> {
     let total = data.len();
     let chunk_size = CHUNK_SIZE as usize;
 

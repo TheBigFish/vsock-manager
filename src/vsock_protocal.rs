@@ -1,3 +1,9 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright (C) 2026 KylinSoft Co., Ltd. <https://www.kylinos.cn/>
+// See LICENSES for license details.
+
+#![allow(dead_code)]
+
 use bytemuck::{Pod, Zeroable};
 
 pub const CHUNK_SIZE: u64 = 512;
