@@ -10,18 +10,18 @@ use std::thread;
 use dashmap::DashSet;
 use mbedtls::error::codes;
 use mbedtls::rng::{CtrDrbg, OsEntropy};
+use mbedtls::ssl::config::{Endpoint, Preset, Transport};
 use mbedtls::ssl::CipherSuite::{
     DhePskWithSm4128GcmSm3, EcdhePskWithSm4128GcmSm3, PskWithSm4128GcmSm3, RsaPskWithSm4128GcmSm3,
 };
-use mbedtls::ssl::config::{Endpoint, Preset, Transport};
 use mbedtls::ssl::{Config, Context, Version};
 use postcard::from_bytes;
 use virga::server::{ServerConfig, ServerManager, VirgeServer};
 
-use crate::pks::{generate_psk, get_psk_identity};
-use crate::protocal::TeeRequest;
+use crate::protocol::TeeRequest;
+use crate::psk::{generate_psk, get_psk_identity};
 use crate::vsock_define::VSOCK_PORT;
-use crate::vsock_protocal::{CHUNK_SIZE, PacketHeader};
+use crate::vsock_protocol::{PacketHeader, CHUNK_SIZE};
 
 pub fn run_vsock_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
     println!("Vsock server is running...");
@@ -29,10 +29,10 @@ pub fn run_vsock_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
     let entropy = OsEntropy::new();
     let rng = Arc::new(CtrDrbg::new(Arc::new(entropy), None)?);
     let cipher_suites: Vec<i32> = vec![
-        PskWithSm4128GcmSm3.into(),
+        EcdhePskWithSm4128GcmSm3.into(),
         DhePskWithSm4128GcmSm3.into(),
         RsaPskWithSm4128GcmSm3.into(),
-        EcdhePskWithSm4128GcmSm3.into(),
+        PskWithSm4128GcmSm3.into(),
         0,
     ];
     let psk = generate_psk()?;

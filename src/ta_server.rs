@@ -12,7 +12,7 @@ use std::{
 use dashmap::DashSet;
 use postcard::from_bytes;
 
-use crate::protocal::TARequest;
+use crate::protocol::TARequest;
 
 const SERVER_SOCKET_PATH: &str = "/tmp/server.sock";
 

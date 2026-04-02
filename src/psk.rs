@@ -3,8 +3,8 @@
 // See LICENSES for license details.
 
 use mbedtls::{
-    hash::{Md, Type},
     Result,
+    hash::{Md, Type},
 };
 
 const KYLINOS: &str = "www.kylinos.cn";
