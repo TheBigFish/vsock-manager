@@ -3,20 +3,21 @@
 // See LICENSES for license details.
 
 #![allow(dead_code)]
+#![allow(non_camel_case_types)]
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub enum TARequest {
     Register { uuid: String },
 }
 
 #[derive(Serialize, Deserialize)]
-pub enum TeeRequest {
+pub enum TEE_Request {
     OpenSession {
         uuid: String,
         connection_method: u32,
-        params: Parameters,
+        params: TEE_Parameters,
     },
     CloseSession {
         session_id: u32,
@@ -24,7 +25,7 @@ pub enum TeeRequest {
     InvokeCommand {
         session_id: u32,
         cmd_id: u32,
-        params: Parameters,
+        params: TEE_Parameters,
     },
     RequestCancellation {
         session_id: u32,
@@ -32,59 +33,42 @@ pub enum TeeRequest {
 }
 
 #[derive(Serialize, Deserialize)]
-pub enum TeeResponse {
+pub enum TEE_Response {
     OpenSession { session_id: u32, result: u32 },
     CloseSession { result: u32 },
-    InvokeCommand { params: Parameters, result: u32 },
+    InvokeCommand { params: TEE_Parameters, result: u32 },
     RequestCancellation { result: u32 },
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Parameters(pub Parameter, pub Parameter, pub Parameter, pub Parameter);
+#[derive(Serialize, Deserialize, Default)]
+pub struct TEE_Parameters(
+    pub TEE_Parameter,
+    pub TEE_Parameter,
+    pub TEE_Parameter,
+    pub TEE_Parameter,
+);
 
-impl Parameters {
-    pub fn default() -> Self {
-        Parameters(
-            Parameter::default(),
-            Parameter::default(),
-            Parameter::default(),
-            Parameter::default(),
-        )
-    }
+#[derive(Serialize, Deserialize, Default)]
+pub struct TEE_Parameter {
+    pub param: TEE_Param,
+    pub param_type: TEE_ParamType,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct Parameter {
-    pub raw: TEEParam,
-    pub param_type: ParamType,
-}
-
-impl Parameter {
-    pub fn default() -> Self {
-        Parameter {
-            raw: TEEParam {
-                data: Vec::new(),
-                value: Value { a: 0, b: 0 },
-            },
-            param_type: ParamType::None,
-        }
-    }
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct TEEParam {
+#[derive(Serialize, Deserialize, Default)]
+pub struct TEE_Param {
     pub data: Vec<u8>,
-    pub value: Value,
+    pub value: TEE_Value,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy)]
-pub struct Value {
+#[derive(Serialize, Deserialize, Default)]
+pub struct TEE_Value {
     pub a: u32,
     pub b: u32,
 }
 
-#[derive(Serialize, Deserialize)]
-pub enum ParamType {
+#[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, Copy)]
+pub enum TEE_ParamType {
+    #[default]
     None = 0,
     ValueInput = 1,
     ValueOutput = 2,
@@ -94,17 +78,17 @@ pub enum ParamType {
     MemrefInout = 7,
 }
 
-impl From<u32> for ParamType {
+impl From<u32> for TEE_ParamType {
     fn from(value: u32) -> Self {
         match value {
-            0 => ParamType::None,
-            1 => ParamType::ValueInput,
-            2 => ParamType::ValueOutput,
-            3 => ParamType::ValueInout,
-            5 => ParamType::MemrefInput,
-            6 => ParamType::MemrefOutput,
-            7 => ParamType::MemrefInout,
-            _ => ParamType::None,
+            0 => TEE_ParamType::None,
+            1 => TEE_ParamType::ValueInput,
+            2 => TEE_ParamType::ValueOutput,
+            3 => TEE_ParamType::ValueInout,
+            5 => TEE_ParamType::MemrefInput,
+            6 => TEE_ParamType::MemrefOutput,
+            7 => TEE_ParamType::MemrefInout,
+            _ => TEE_ParamType::None,
         }
     }
 }
