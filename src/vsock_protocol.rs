@@ -6,7 +6,7 @@
 
 use bytemuck::{Pod, Zeroable};
 
-pub const CHUNK_SIZE: u64 = 512;
+pub const CHUNK_SIZE: u64 = 32 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PacketType {

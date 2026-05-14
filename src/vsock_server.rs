@@ -109,7 +109,7 @@ pub fn handle_vsock_request(
             &mut session_uuid,
         )?;
 
-        thread::sleep(std::time::Duration::from_millis(1));
+        //thread::sleep(std::time::Duration::from_millis(1));
     }
 
     ctx.close();
@@ -154,39 +154,51 @@ fn handle_packet(
 }
 
 fn recv_data(ctx: &mut Context<VirgeServer>, data: &mut [u8]) -> mbedtls::Result<()> {
-    let total = data.len();
-    let chunk_size = CHUNK_SIZE as usize;
+    ctx.read_exact(data).map_err(|_| codes::NetRecvFailed)?;
+    println!("服务端：接收数据，实际大小：{}", data.len());
 
-    let tmp = [1u8; 4];
 
-    if total <= chunk_size {
-        ctx.read_exact(data).map_err(|_| codes::NetRecvFailed)?;
-        ctx.write_all(&tmp).map_err(|_| codes::NetSendFailed)?;
-    } else {
-        let mut offset: usize = 0;
-        while offset < total {
-            let chunk_size = (total - offset).min(chunk_size);
-            ctx.read_exact(&mut data[offset..offset + chunk_size])
-                .map_err(|_| codes::NetRecvFailed)?;
-            ctx.write_all(&tmp).map_err(|_| codes::NetSendFailed)?;
-            offset += chunk_size;
-        }
-    }
+    // let tmp = [1u8; 4];
+    // ctx.write_all(&tmp).map_err(|_| codes::NetSendFailed)?;
+    // let total = data.len();
+    // let chunk_size = CHUNK_SIZE as usize;
+
+    // let tmp = [1u8; 4];
+
+    // if total <= chunk_size {
+    //     ctx.read_exact(data).map_err(|_| codes::NetRecvFailed)?;
+    //     ctx.write_all(&tmp).map_err(|_| codes::NetSendFailed)?;
+    // } else {
+    //     let mut offset: usize = 0;
+    //     while offset < total {
+    //         let chunk_size = (total - offset).min(chunk_size);
+    //         ctx.read_exact(&mut data[offset..offset + chunk_size])
+    //             .map_err(|_| codes::NetRecvFailed)?;
+    //         ctx.write_all(&tmp).map_err(|_| codes::NetSendFailed)?;
+    //         offset += chunk_size;
+    //     }
+    // }
 
     Ok(())
 }
 
 fn send_data(ctx: &mut Context<VirgeServer>, data: &[u8]) -> mbedtls::Result<()> {
-    let total = data.len();
-    let chunk_size = CHUNK_SIZE as usize;
+    ctx.write_all(data).map_err(|_| codes::NetSendFailed)?;
+    println!("服务端：发送数据，实际大小：{}", data.len());
 
-    if total <= chunk_size {
-        ctx.write_all(data).map_err(|_| codes::NetSendFailed)?;
-    } else {
-        for chunk in data.chunks(chunk_size) {
-            ctx.write_all(chunk).map_err(|_| codes::NetSendFailed)?;
-        }
-    }
+    // let mut tmp = [1u8; 4];
+    // ctx.read_exact(&mut tmp).map_err(|_| codes::NetRecvFailed)?;
+
+    // let total = data.len();
+    // let chunk_size = CHUNK_SIZE as usize;
+
+    // if total <= chunk_size {
+    //     ctx.write_all(data).map_err(|_| codes::NetSendFailed)?;
+    // } else {
+    //     for chunk in data.chunks(chunk_size) {
+    //         ctx.write_all(chunk).map_err(|_| codes::NetSendFailed)?;
+    //     }
+    // }
 
     Ok(())
 }
