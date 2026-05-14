@@ -2,26 +2,36 @@
 // Copyright (C) 2026 KylinSoft Co., Ltd. <https://www.kylinos.cn/>
 // See LICENSES for license details.
 
-use std::io::{ErrorKind, Read, Write};
-use std::os::unix::net::UnixStream;
-use std::sync::Arc;
-use std::thread;
+use std::{
+    io::{ErrorKind, Read, Write},
+    os::unix::net::UnixStream,
+    sync::Arc,
+    thread,
+};
 
 use dashmap::DashSet;
-use mbedtls::error::codes;
-use mbedtls::rng::{CtrDrbg, OsEntropy};
-use mbedtls::ssl::config::{Endpoint, Preset, Transport};
-use mbedtls::ssl::CipherSuite::{
-    DhePskWithSm4128GcmSm3, EcdhePskWithSm4128GcmSm3, PskWithSm4128GcmSm3, RsaPskWithSm4128GcmSm3,
+use mbedtls::{
+    error::codes,
+    rng::{CtrDrbg, OsEntropy},
+    ssl::{
+        CipherSuite::{
+            DhePskWithSm4128GcmSm3, EcdhePskWithSm4128GcmSm3, PskWithSm4128GcmSm3,
+            RsaPskWithSm4128GcmSm3,
+        },
+        Config, Context, Version,
+        config::{Endpoint, Preset, Transport},
+    },
 };
-use mbedtls::ssl::{Config, Context, Version};
+
 use postcard::from_bytes;
 use virga::server::{ServerConfig, ServerManager, VirgeServer};
 
-use crate::protocol::TeeRequest;
-use crate::psk::{generate_psk, get_psk_identity};
-use crate::vsock_define::VSOCK_PORT;
-use crate::vsock_protocol::{PacketHeader, CHUNK_SIZE};
+use crate::{
+    protocol::TEE_Request,
+    psk::{generate_psk, get_psk_identity},
+    vsock_define::VSOCK_PORT,
+    vsock_protocol::{CHUNK_SIZE, PacketHeader},
+};
 
 pub fn run_vsock_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
     println!("Vsock server is running...");
@@ -115,9 +125,9 @@ fn handle_packet(
     let mut data = vec![0u8; header.data_size as usize];
     recv_data(ctx, &mut data)?;
 
-    let req: TeeRequest = from_bytes(&data)?;
+    let req: TEE_Request = from_bytes(&data)?;
     let uuid = match req {
-        TeeRequest::OpenSession { uuid, .. } => {
+        TEE_Request::OpenSession { uuid, .. } => {
             *session_uuid = Some(uuid.clone());
             uuid
         }
