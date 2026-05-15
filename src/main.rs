@@ -8,11 +8,9 @@ use dashmap::DashSet;
 
 use crate::{ta_server::run_ta_server, vsock_server::run_vsock_server};
 
-mod protocol;
 mod psk;
 mod ta_server;
 mod vsock_define;
-mod vsock_protocol;
 mod vsock_server;
 
 fn main() {

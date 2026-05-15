@@ -11,8 +11,7 @@ use std::{
 
 use dashmap::DashSet;
 use postcard::from_bytes;
-
-use crate::protocol::TARequest;
+use teec_protocol::TARequest;
 
 const SERVER_SOCKET_PATH: &str = "/tmp/server.sock";
 

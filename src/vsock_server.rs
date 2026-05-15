@@ -24,14 +24,14 @@ use mbedtls::{
 };
 
 use postcard::from_bytes;
+use teec_protocol::TEE_Request;
 use virga::server::{ServerConfig, ServerManager, VirgeServer};
 
 use crate::{
-    protocol::TEE_Request,
     psk::{generate_psk, get_psk_identity},
     vsock_define::VSOCK_PORT,
-    vsock_protocol::{CHUNK_SIZE, PacketHeader},
 };
+use teec_protocol::{CHUNK_SIZE, PacketHeader};
 
 pub fn run_vsock_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
     println!("Vsock server is running...");
