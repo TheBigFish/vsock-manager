@@ -9,13 +9,14 @@ use std::{
     thread,
 };
 
-use dashmap::DashSet;
 use postcard::from_bytes;
-use teec_protocol::TARequest;
+
+use crate::protocol::TARequest;
+use crate::ta_runtime::{TaFlags, TaRegistry};
 
 const SERVER_SOCKET_PATH: &str = "/tmp/server.sock";
 
-pub fn run_ta_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
+pub fn run_ta_server(registry: Arc<TaRegistry>) -> anyhow::Result<()> {
     println!("TA server is running...");
 
     let _ = std::fs::remove_file(SERVER_SOCKET_PATH);
@@ -39,7 +40,7 @@ pub fn run_ta_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
 
 pub fn handle_ta_request(
     mut stream: UnixStream,
-    registry: Arc<DashSet<String>>,
+    registry: Arc<TaRegistry>,
 ) -> anyhow::Result<()> {
     println!("New TA connection established");
 
@@ -51,9 +52,28 @@ pub fn handle_ta_request(
 
     let req: TARequest = from_bytes(&buf[..n])?;
     match req {
-        TARequest::Register { uuid } => {
-            registry.insert(uuid.clone());
-            println!("Registered TA with UUID: {}", uuid);
+        TARequest::Register {
+            uuid,
+            instance_id,
+            socket_path,
+            is_single_instance,
+            is_multi_session,
+            is_instance_keep_alive,
+        } => {
+            registry.mark_registered(
+                &uuid,
+                instance_id,
+                socket_path.clone(),
+                TaFlags {
+                    is_single_instance,
+                    is_multi_session,
+                    is_instance_keep_alive,
+                },
+            );
+            println!(
+                "Registered TA with UUID: {}, instance_id: {}, socket_path: {}",
+                uuid, instance_id, socket_path
+            );
         }
     }
 
