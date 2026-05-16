@@ -8,10 +8,17 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub enum TARequest {
-    Register { uuid: String },
+    Register {
+        uuid: String,
+        instance_id: u32,
+        socket_path: String,
+        is_single_instance: bool,
+        is_multi_session: bool,
+        is_instance_keep_alive: bool,
+    },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum TeeRequest {
     OpenSession {
         uuid: String,
@@ -31,7 +38,7 @@ pub enum TeeRequest {
     },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum TeeResponse {
     OpenSession { session_id: u32, result: u32 },
     CloseSession { result: u32 },
@@ -39,7 +46,7 @@ pub enum TeeResponse {
     RequestCancellation { result: u32 },
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Parameters(pub Parameter, pub Parameter, pub Parameter, pub Parameter);
 
 impl Parameters {
@@ -53,7 +60,7 @@ impl Parameters {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Parameter {
     pub raw: TEEParam,
     pub param_type: ParamType,
@@ -71,7 +78,7 @@ impl Parameter {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct TEEParam {
     pub data: Vec<u8>,
     pub value: Value,
@@ -83,7 +90,7 @@ pub struct Value {
     pub b: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 pub enum ParamType {
     None = 0,
     ValueInput = 1,
