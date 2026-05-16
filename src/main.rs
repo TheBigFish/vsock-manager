@@ -4,17 +4,16 @@
 
 use std::{sync::Arc, thread};
 
-use dashmap::DashSet;
-
 use crate::{ta_server::run_ta_server, vsock_server::run_vsock_server};
 
 mod psk;
 mod ta_server;
+mod ta_runtime;
 mod vsock_define;
 mod vsock_server;
 
 fn main() {
-    let ta_registry = Arc::new(DashSet::<String>::new());
+    let ta_registry = Arc::new(ta_runtime::TaRegistry::from_env());
 
     let handle1 = thread::spawn({
         let registry = ta_registry.clone();
