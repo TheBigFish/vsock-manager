@@ -26,6 +26,7 @@ use mbedtls::{
 use postcard::from_bytes;
 use teec_protocol::TEE_Request;
 use virga::server::{ServerConfig, ServerManager, VirgeServer};
+use zeroize::Zeroize;
 
 use crate::{
     psk::{generate_psk, get_psk_identity},
@@ -45,7 +46,7 @@ pub fn run_vsock_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
         PskWithSm4128GcmSm3.into(),
         0,
     ];
-    let psk = generate_psk()?;
+    let mut psk = generate_psk()?;
     let psk_identity = get_psk_identity();
     let mut config = Config::new(Endpoint::Server, Transport::Stream, Preset::Default);
 
@@ -54,8 +55,11 @@ pub fn run_vsock_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
     config.set_max_version(Version::Tls1_2)?;
     config.set_ciphersuites(Arc::new(cipher_suites));
     config.set_psk(&psk, psk_identity)?;
-    let rc_config = Arc::new(config);
 
+    // 敏感数据使用后立即清零
+    psk.zeroize();
+
+    let rc_config = Arc::new(config);
     let config = ServerConfig::new(0xFFFFFFFF, VSOCK_PORT, CHUNK_SIZE as u32, false);
     let mut manager = ServerManager::new(config);
     manager.start()?;
