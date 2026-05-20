@@ -14,10 +14,7 @@ use mbedtls::{
     error::codes,
     rng::{CtrDrbg, OsEntropy},
     ssl::{
-        CipherSuite::{
-            DhePskWithSm4128GcmSm3, EcdhePskWithSm4128GcmSm3, PskWithSm4128GcmSm3,
-            RsaPskWithSm4128GcmSm3,
-        },
+        CipherSuite::EcdhePskWithSm4128GcmSm3,
         Config, Context, Version,
         config::{Endpoint, Preset, Transport},
     },
@@ -39,13 +36,7 @@ pub fn run_vsock_server(registry: Arc<DashSet<String>>) -> anyhow::Result<()> {
 
     let entropy = OsEntropy::new();
     let rng = Arc::new(CtrDrbg::new(Arc::new(entropy), None)?);
-    let cipher_suites: Vec<i32> = vec![
-        EcdhePskWithSm4128GcmSm3.into(),
-        DhePskWithSm4128GcmSm3.into(),
-        RsaPskWithSm4128GcmSm3.into(),
-        PskWithSm4128GcmSm3.into(),
-        0,
-    ];
+    let cipher_suites: Vec<i32> = vec![EcdhePskWithSm4128GcmSm3.into(), 0];
     let mut psk = generate_psk()?;
     let psk_identity = get_psk_identity();
     let mut config = Config::new(Endpoint::Server, Transport::Stream, Preset::Default);
