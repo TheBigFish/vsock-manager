@@ -8,6 +8,10 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;src/ta_server.rs
 
+fn vsock_server_debug_enabled() -> bool {
+    std::env::var_os("VSOCK_MANAGER_DEBUG_VSOCK_SERVER").is_some()
+}
+
 use dashmap::DashMap;
 use mbedtls::error::codes;
 use mbedtls::rng::{CtrDrbg, OsEntropy};
@@ -130,32 +134,51 @@ pub fn handle_vsock_request(
 ) -> anyhow::Result<()> {
     let mut ctx = Context::new(config.clone());
     ctx.establish(stream, None)?;
+    if vsock_server_debug_enabled() {
+        eprintln!("[TEE] handle_vsock_request: TLS established, entering read loop");
+    }
 
     loop {
         let mut header = [0; PacketHeader::SIZE];
 
         if ctx.io_mut().is_none() {
+            eprintln!("[TEE] handle_vsock_request: io_mut is none, breaking loop");
             break;
         }
 
         if let Err(e) = ctx.read_exact(&mut header) {
             if header_read_is_peer_closed(&e) {
                 println!("Vsock server connection closed");
+                if vsock_server_debug_enabled() {
+                    eprintln!("[TEE] handle_vsock_request: peer closed, breaking loop");
+                }
                 break;
             }
             println!("Vsock server read header failed: {e}");
+            eprintln!("[TEE] handle_vsock_request: read header failed: {e}, breaking loop");
             break;
+        }
+
+        let hdr = PacketHeader::from_bytes(&header);
+        if vsock_server_debug_enabled() {
+            eprintln!(
+                "[TEE] handle_vsock_request: got packet type={} data_size={}",
+                hdr.data_type, hdr.data_size
+            );
         }
 
         handle_packet(
             &mut ctx,
-            PacketHeader::from_bytes(&header),
+            hdr,
             registry.as_ref(),
         )?;
 
         //thread::sleep(std::time::Duration::from_millis(1));
     }
 
+    if vsock_server_debug_enabled() {
+        eprintln!("[TEE] handle_vsock_request: closing TLS context");
+    }
     ctx.close();
 
     Ok(())
@@ -172,12 +195,22 @@ fn handle_packet(
     let req: TeeRequest = from_bytes(&data)?;
     match req {
         TeeRequest::OpenSession {
-            uuid,
+            ref uuid,
             connection_method,
-            params,
+            ref params,
         } => {
+            if std::env::var_os("VSOCK_MANAGER_DEBUG_OPEN_SESSION").is_some() {
+                eprintln!(
+                    "[TEE] handle_packet: OpenSession uuid={uuid} connection_method={connection_method}"
+                );
+            }
+            crate::debug_log(&format!("OpenSession START uuid={uuid}"));
             let route = match registry.prepare_instance_for_open(&uuid) {
                 Ok(route) => {
+                    crate::debug_log(&format!(
+                        "OpenSession route_ok uuid={} instance_id={} socket_path={}",
+                        route.uuid, route.instance_id, route.socket_path
+                    ));
                     if std::env::var_os("VSOCK_MANAGER_DEBUG_OPEN_SESSION").is_some() {
                         eprintln!(
                             "[vsock-manager vsock_server] OpenSession route uuid={} instance_id={} socket_path={}",
@@ -199,9 +232,14 @@ fn handle_packet(
             let request = TeeRequest::OpenSession {
                 uuid: uuid.clone(),
                 connection_method,
-                params,
+                params: params.clone(),
             };
             let req_buf = serialize_message(&request)?;
+            crate::debug_log(&format!(
+                "OpenSession fwd_req socket_path={} req_len={}",
+                route.socket_path,
+                req_buf.len()
+            ));
             let forwarded = forward_request_to_ta_with_retry(
                 &route.socket_path,
                 &req_buf,
@@ -209,8 +247,15 @@ fn handle_packet(
                 std::time::Duration::from_millis(OPEN_SESSION_RETRY_INTERVAL_MS),
             );
             let resp_buf = match forwarded {
-                Ok(buf) => buf,
+                Ok(buf) => {
+                    crate::debug_log(&format!("OpenSession fwd_ok resp_len={}", buf.len()));
+                    buf
+                }
                 Err(err) => {
+                    crate::debug_log(&format!(
+                        "OpenSession fwd_err socket_path={} err={err}",
+                        route.socket_path
+                    ));
                     registry.mark_instance_unavailable(&uuid, route.instance_id);
                     let resp = TeeResponse::OpenSession {
                         session_id: 0,
@@ -269,6 +314,11 @@ fn handle_packet(
             cmd_id,
             params,
         } => {
+            if vsock_server_debug_enabled() {
+                eprintln!(
+                    "[TEE] handle_packet: InvokeCommand session_id={global_session_id} cmd_id={cmd_id}"
+                );
+            }
             let Some(entry) = registry.session_entry(global_session_id) else {
                 let resp = TeeResponse::InvokeCommand {
                     params,
@@ -316,6 +366,9 @@ fn handle_packet(
             session_id: global_session_id,
         } => {
             if vsock_close_debug() {
+                eprintln!(
+                    "[TEE] handle_packet: CloseSession global_session_id={global_session_id}"
+                );
                 eprintln!(
                     "[vsock-mgr CloseSession] enter global_session_id={global_session_id}"
                 );
@@ -531,17 +584,21 @@ fn forward_request_to_ta(
     kind: TaUnixForwardKind,
 ) -> std::io::Result<Vec<u8>> {
     let semaphore = TA_FORWARD_SEMAPHORE.get_or_init(TaForwardSemaphore::new);
+    crate::debug_log(&format!("fwd_acquire_sem path={socket_path}"));
     let _permit = semaphore.acquire(socket_path)?;
+    crate::debug_log(&format!("fwd_sem_ok path={socket_path}"));
 
     if ta_forward_debug() {
         eprintln!(
-            "[vsock-mgr ta-fwd] begin kind={kind:?} path={socket_path} req_len={}",
+            "[TEE] forward_request_to_ta: kind={kind:?} path={socket_path} req_len={}",
             req.len()
         );
     }
     let fwd_start = std::time::Instant::now();
 
+    crate::debug_log(&format!("fwd_connect path={socket_path}"));
     let mut stream = UnixStream::connect(socket_path)?;
+    crate::debug_log(&format!("fwd_connected path={socket_path}"));
     if let Some(d) = ta_unix_read_timeout(kind) {
         stream.set_read_timeout(Some(d))?;
     }
@@ -550,16 +607,21 @@ fn forward_request_to_ta(
     message.extend_from_slice(&(req.len() as u32).to_ne_bytes());
     message.extend_from_slice(req);
     stream.write_all(&message)?;
+    crate::debug_log(&format!("fwd_wrote path={socket_path}"));
 
     let mut len_buf = [0u8; 4];
+    crate::debug_log(&format!("fwd_read_len path={socket_path}"));
     stream.read_exact(&mut len_buf)?;
     let len = u32::from_ne_bytes(len_buf) as usize;
+    crate::debug_log(&format!("fwd_len={len} path={socket_path}"));
     let mut resp = vec![0u8; len];
+    crate::debug_log(&format!("fwd_read_data path={socket_path} len={len}"));
     stream.read_exact(&mut resp)?;
+    crate::debug_log(&format!("fwd_read_done path={socket_path}"));
 
     if ta_forward_debug() {
         eprintln!(
-            "[vsock-mgr ta-fwd] done kind={kind:?} path={socket_path} elapsed={:?} resp_len={}",
+            "[TEE] forward_request_to_ta: done kind={kind:?} path={socket_path} elapsed={:?} resp_len={}",
             fwd_start.elapsed(),
             resp.len()
         );

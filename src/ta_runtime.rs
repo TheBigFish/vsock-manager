@@ -151,6 +151,7 @@ impl TaRegistry {
     }
 
     pub fn prepare_instance_for_open(&self, uuid: &str) -> std::result::Result<InstanceRoute, EnsureTaError> {
+        crate::debug_log(&format!("pio START uuid={uuid} timeout_ms={}", self.register_timeout.as_millis()));
         let deadline = Instant::now() + self.register_timeout;
         // 本次 OpenSession：当前 spawn 目标 instance_id，就绪后 Return（multi-instance 必需；其它路径也可填充无副作用）。
         let mut awaiting_instance_for_this_open: Option<u32> = None;
@@ -268,24 +269,59 @@ impl TaRegistry {
             };
 
             match decision {
-                Decision::Return(route) => return Ok(route),
+                Decision::Return(route) => {
+                    crate::debug_log(&format!(
+                        "pio RETURN uuid={uuid} instance_id={} socket_path={}",
+                        route.instance_id, route.socket_path
+                    ));
+                    return Ok(route);
+                }
                 Decision::Wait => {
+                    crate::debug_log(&format!("pio WAIT uuid={uuid}"));
                     let now = Instant::now();
                     if now >= deadline {
                         return Err(EnsureTaError::RegisterTimeout);
                     }
                     let timeout = deadline.saturating_duration_since(now);
                     let guard = self.state.lock().map_err(|_| EnsureTaError::Internal)?;
-                    let (_guard, wait_result) = self
+
+                    // 在 wait 之前二次检查条件：消除 decision block 释放锁到此处
+                    // 重新获取锁之间的信号丢失窗口。若 mark_registered 已在此窗口内
+                    // 设 Ready 并 notify_all，此处直接 continue 回到循环顶重新判断。
+                    let already_ready = {
+                        if let Some(entry) = guard.entries.get(uuid) {
+                            if let Some(wid) = awaiting_instance_for_this_open {
+                                entry
+                                    .instances
+                                    .get(&wid)
+                                    .map_or(false, |inst| inst.state == InstanceState::Ready)
+                            } else {
+                                entry
+                                    .instances
+                                    .values()
+                                    .any(|inst| inst.state == InstanceState::Ready)
+                            }
+                        } else {
+                            false
+                        }
+                    };
+                    if already_ready {
+                        drop(guard);
+                        continue;
+                    }
+
+                    let (new_guard, wait_result) = self
                         .cond
                         .wait_timeout(guard, timeout)
                         .map_err(|_| EnsureTaError::Internal)?;
+                    drop(new_guard);
                     if wait_result.timed_out() {
                         return Err(EnsureTaError::RegisterTimeout);
                     }
                     continue;
                 }
                 Decision::Spawn { instance_id } => {
+                    crate::debug_log(&format!("pio SPAWN uuid={uuid} instance_id={instance_id}"));
                     awaiting_instance_for_this_open = Some(instance_id);
                     if ta_runtime_debug_enabled() {
                         eprintln!(
@@ -293,8 +329,12 @@ impl TaRegistry {
                         );
                     }
                     let child = match self.spawn_ta(uuid, instance_id) {
-                        Ok(c) => c,
+                        Ok(c) => {
+                            crate::debug_log(&format!("pio SPAWN_OK uuid={uuid} instance_id={instance_id} pid={}", c.id()));
+                            c
+                        }
                         Err(err) => {
+                            crate::debug_log(&format!("pio SPAWN_ERR uuid={uuid} instance_id={instance_id} err={err:?}"));
                             // 决策阶段已插入 `Starting` 占位；spawn 失败必须回滚，否则会留下永远
                             // 不 Ready 的实例，后续 OpenSession 会误判 has_starting 而长时间阻塞在 Wait
                             //（bad_uuid 等对不存在 TA 的用例）。
@@ -308,7 +348,11 @@ impl TaRegistry {
                     if let Some(instance) = entry.instances.get_mut(&instance_id) {
                         instance.pid = Some(pid);
                         instance.child = Some(child);
-                        instance.state = InstanceState::Starting;
+                        // mark_registered 可能在 spawn 期间已将状态提升为 Ready，
+                        // 不要在此覆写回去，否则本线程下次检查时会误判为 Starting 而卡在 Wait。
+                        if instance.state != InstanceState::Ready {
+                            instance.state = InstanceState::Starting;
+                        }
                     }
                     self.cond.notify_all();
                 }
@@ -323,6 +367,10 @@ impl TaRegistry {
         socket_path: String,
         flags: TaFlags,
     ) {
+        crate::debug_log(&format!(
+            "mark_registered uuid={uuid} instance_id={instance_id} socket_path={socket_path} single={} multi={} keep={}",
+            flags.is_single_instance, flags.is_multi_session, flags.is_instance_keep_alive
+        ));
         if let Ok(mut guard) = self.state.lock() {
             let entry = guard.entries.entry(uuid.to_string()).or_default();
             if let Some(existing) = entry.flags {
@@ -405,6 +453,12 @@ impl TaRegistry {
                         retire = true;
                     } else if !flags.is_instance_keep_alive && inst.active_sessions == 0 {
                         retire = true;
+                    }
+                    if ta_runtime_debug_enabled() {
+                        eprintln!(
+                            "[TEE] on_session_closed: uuid={uuid} instance_id={instance_id} active_sessions={} retire={retire} is_single={} keep_alive={}",
+                            inst.active_sessions, flags.is_single_instance, flags.is_instance_keep_alive
+                        );
                     }
                     if retire {
                         inst.state = InstanceState::Dead;
@@ -511,6 +565,12 @@ impl VirtualSessionManager {
             match self.mapping.entry(candidate) {
                 Entry::Vacant(v) => {
                     v.insert(entry);
+                    if ta_runtime_debug_enabled() {
+                        eprintln!(
+                            "[TEE] VirtualSessionManager::bind: global_session_id={candidate} uuid={} instance_id={} local_session_id={}",
+                            binding.uuid, binding.instance_id, binding.local_session_id
+                        );
+                    }
                     return candidate;
                 }
                 Entry::Occupied(_) => continue,
@@ -523,6 +583,11 @@ impl VirtualSessionManager {
     }
 
     pub fn unbind(&self, global_session_id: u32) {
+        if ta_runtime_debug_enabled() {
+            eprintln!(
+                "[TEE] VirtualSessionManager::unbind: global_session_id={global_session_id}"
+            );
+        }
         self.mapping.remove(&global_session_id);
     }
 
