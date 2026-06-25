@@ -6,7 +6,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;src/ta_server.rs
+use std::time::Duration;
 
 fn vsock_server_debug_enabled() -> bool {
     std::env::var_os("VSOCK_MANAGER_DEBUG_VSOCK_SERVER").is_some()
@@ -16,18 +16,20 @@ use dashmap::DashMap;
 use mbedtls::error::codes;
 use mbedtls::rng::{CtrDrbg, OsEntropy};
 use mbedtls::ssl::config::{Endpoint, Preset, Transport};
-use mbedtls::ssl::CipherSuite::{
-    DhePskWithSm4128GcmSm3, EcdhePskWithSm4128GcmSm3, PskWithSm4128GcmSm3, RsaPskWithSm4128GcmSm3,
-};
+use mbedtls::ssl::CipherSuite::EcdhePskWithSm4128GcmSm3;
 use mbedtls::ssl::{Config, Context, Version};
 use postcard::{from_bytes, to_vec};
 use virga::server::{ServerConfig, ServerManager, VirgeServer};
+use zeroize::Zeroize;
 
-use crate::protocol::{TeeRequest, TeeResponse};
 use crate::psk::{generate_psk, get_psk_identity};
 use crate::ta_runtime::{EnsureTaError, TaRegistry};
 use crate::vsock_define::VSOCK_PORT;
-use crate::vsock_protocol::{PacketHeader, CHUNK_SIZE};
+use teec_protocol::{
+    PacketHeader, CHUNK_SIZE,
+    TEE_Request as TeeRequest,
+    TEE_Response as TeeResponse,
+};
 
 const TEE_ERROR_GENERIC: u32 = 0xFFFF0000;
 const TEE_ERROR_ITEM_NOT_FOUND: u32 = 0xFFFF0008;
@@ -197,7 +199,8 @@ fn handle_packet(
         TeeRequest::OpenSession {
             ref uuid,
             connection_method,
-            ref params,
+            params,
+            ref ca_auth_info,
         } => {
             if std::env::var_os("VSOCK_MANAGER_DEBUG_OPEN_SESSION").is_some() {
                 eprintln!(
@@ -232,7 +235,8 @@ fn handle_packet(
             let request = TeeRequest::OpenSession {
                 uuid: uuid.clone(),
                 connection_method,
-                params: params.clone(),
+                params,
+                ca_auth_info: ca_auth_info.clone(),
             };
             let req_buf = serialize_message(&request)?;
             crate::debug_log(&format!(
