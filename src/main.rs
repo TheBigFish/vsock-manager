@@ -8,7 +8,6 @@ use dashmap::DashSet;
 
 use crate::{ta_server::run_ta_server, vsock_server::run_vsock_server};
 
-mod psk;
 mod ta_server;
 mod vsock_define;
 mod vsock_server;
@@ -25,12 +24,9 @@ fn main() {
         }
     });
 
-    let handle2 = thread::spawn({
-        let registry = ta_registry.clone();
-        move || {
-            if let Err(e) = run_vsock_server(registry) {
-                eprintln!("Vsock server failed: {:?}", e);
-            }
+    let handle2 = thread::spawn(move || {
+        if let Err(e) = run_vsock_server() {
+            eprintln!("Vsock server failed: {:?}", e);
         }
     });
 
