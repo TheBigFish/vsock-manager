@@ -11,7 +11,7 @@ use std::{
 
 use postcard::from_bytes;
 
-use crate::protocol::TARequest;
+use teec_protocol::TARequest;
 use crate::ta_runtime::{TaFlags, TaRegistry};
 
 const SERVER_SOCKET_PATH: &str = "/tmp/server.sock";

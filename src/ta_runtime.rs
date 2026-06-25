@@ -487,6 +487,9 @@ impl TaRegistry {
             }
         }
         for instance_id in dead_instances {
+            if let Some(instance) = entry.instances.get(&instance_id) {
+                let _ = std::fs::remove_file(&instance.socket_path);
+            }
             entry.instances.remove(&instance_id);
             self.virtual_sessions.invalidate_instance(uuid, instance_id);
         }
