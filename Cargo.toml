@@ -1,20 +1,17 @@
 [package]
 name = "vsock-manager"
-version = "0.2.0"
+version = "0.3.0"
 license = "Apache-2.0"
 authors = ["huangsiyuan <huangsiyuan@kylinos.cn>"]
 edition = "2024"
 
 [dependencies]
-dashmap = "6.1.0"
-anyhow = "1.0.100"
+dashmap = "6.1"
+anyhow = "1.0"
 postcard = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-teec-protocol = "0.1"
-mbedtls = { version = "0.13.9", package = "mbedtls-smx", default-features = false, features = [ "std", "ssl" ] }
-mbedtls-sys-auto = { version = "2.28.21", package = "mbedtls-sys-auto-smx", default-features = false }
-virga = { version = "0.1.1", default-features = false, features = [ "use-xtransport" ] }
-zeroize = { version = "1.8", default-features = false }
-
-[patch.crates-io]
-teec-protocol = { path = "../crates/rust-libteec/teec-protocol" }
+mbedtls = { version = "0.13", package = "mbedtls-smx", default-features = false, features = [ "std", "ssl" ] }
+mbedtls-sys-auto = { version = "2.28", package = "mbedtls-sys-auto-smx", default-features = false }
+virga = { version = "0.1", default-features = false, features = [ "use-xtransport" ] }
+teec-protocol = "0.2"
+xtee-psk = "0.2"
