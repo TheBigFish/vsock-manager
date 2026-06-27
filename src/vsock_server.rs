@@ -2,33 +2,48 @@
 // Copyright (C) 2026 KylinSoft Co., Ltd. <https://www.kylinos.cn/>
 // See LICENSES for license details.
 
-use std::io::{ErrorKind, Read, Write};
-use std::os::unix::net::UnixStream;
-use std::sync::{Arc, Condvar, Mutex, OnceLock};
-use std::thread;
-use std::time::Duration;
+//! 基于 VSOCK + ECDH-PSK 的机密通信服务端。
+//!
+//! ## 服务端身份与 TOFU 模型
+//!
+//! 服务端在启动时生成一个长期 SM2 DSA 密钥对，该密钥对跨连接持久化：
+//! - 每次 ECDH 协商时，服务端用长期密钥对交换数据签名
+//! - 客户端通过 TOFU（Trust On First Use）模型校验服务端长期公钥的一致性
+//! - 若服务端重启导致密钥变更，客户端会检测到并拒绝连接（防御持续性 MITM）
+//!
+//! 注意：服务端长期密钥仅在进程生命周期内有效，重启后会重新生成。
+//! 在机密通信场景中，服务端与客户端部署在同一设备上，首次连接发生在
+//! 受控环境中，因此 TOFU 模型足以保障服务端身份不被替换。
 
-fn vsock_server_debug_enabled() -> bool {
-    std::env::var_os("VSOCK_MANAGER_DEBUG_VSOCK_SERVER").is_some()
-}
+use std::{
+    io::{ErrorKind, Read, Write},
+    os::unix::net::UnixStream,
+    sync::{Arc, Condvar, Mutex, OnceLock},
+    thread,
+    time::Duration,
+};
 
 use dashmap::DashMap;
-use mbedtls::error::codes;
-use mbedtls::rng::{CtrDrbg, OsEntropy};
-use mbedtls::ssl::config::{Endpoint, Preset, Transport};
-use mbedtls::ssl::CipherSuite::EcdhePskWithSm4128GcmSm3;
-use mbedtls::ssl::{Config, Context, Version};
+use mbedtls::{
+    error::codes,
+    rng::{CtrDrbg, OsEntropy},
+    ssl::{
+        CipherSuite::EcdhePskWithSm4128GcmSm3,
+        Config, Context, Version,
+        config::{Endpoint, Preset, Transport},
+    },
+};
 use postcard::{from_bytes, to_vec};
-use virga::server::{ServerConfig, ServerManager, VirgeServer};
-use zeroize::Zeroize;
-
-use crate::psk::{generate_psk, get_psk_identity};
-use crate::ta_runtime::{EnsureTaError, TaRegistry};
-use crate::vsock_define::VSOCK_PORT;
 use teec_protocol::{
-    PacketHeader, CHUNK_SIZE,
-    TEE_Request as TeeRequest,
+    CHUNK_SIZE, MAX_MESSAGE_SIZE, PacketHeader, TEE_Request as TeeRequest,
     TEE_Response as TeeResponse,
+};
+use virga::server::{ServerConfig, ServerManager, VirgeServer};
+use xtee_psk::{ServerPskContext, new_crypto_rng, virga_transport::VirgeServerTransport};
+
+use crate::{
+    ta_runtime::{EnsureTaError, TaRegistry},
+    vsock_define::VSOCK_PORT,
 };
 
 const TEE_ERROR_GENERIC: u32 = 0xFFFF0000;
@@ -43,6 +58,10 @@ const OPEN_SESSION_RETRY_INTERVAL_MS: u64 = 30;
 enum TaUnixForwardKind {
     OpenSession,
     LongRunning,
+}
+
+fn vsock_server_debug_enabled() -> bool {
+    std::env::var_os("VSOCK_MANAGER_DEBUG_VSOCK_SERVER").is_some()
 }
 
 fn ta_forward_debug() -> bool {
@@ -94,23 +113,18 @@ fn header_read_is_peer_closed(e: &std::io::Error) -> bool {
 pub fn run_vsock_server(registry: Arc<TaRegistry>) -> anyhow::Result<()> {
     println!("Vsock server is running...");
 
-    let entropy = OsEntropy::new();
-    let rng = Arc::new(CtrDrbg::new(Arc::new(entropy), None)?);
-    let cipher_suites: Vec<i32> = vec![EcdhePskWithSm4128GcmSm3.into(), 0];
-    let mut psk = generate_psk()?;
-    let psk_identity = get_psk_identity();
-    let mut config = Config::new(Endpoint::Server, Transport::Stream, Preset::Default);
+    let entropy = Arc::new(OsEntropy::new());
+    let cipher_suites: Arc<Vec<i32>> = Arc::new(vec![EcdhePskWithSm4128GcmSm3.into(), 0]);
 
-    config.set_rng(rng);
-    config.set_min_version(Version::Tls1_2)?;
-    config.set_max_version(Version::Tls1_2)?;
-    config.set_ciphersuites(Arc::new(cipher_suites));
-    config.set_psk(&psk, psk_identity)?;
+    // 服务端长期密钥：启动时生成，跨连接持久化
+    // 用于对每次 ECDH 交换签名，使客户端可通过 TOFU 模型校验服务端身份一致性
+    let mut key_rng =
+        new_crypto_rng().map_err(|e| anyhow::anyhow!("ECDH: create crypto rng failed: {e}"))?;
+    let psk_ctx = Arc::new(
+        ServerPskContext::generate(&mut key_rng)
+            .map_err(|e| anyhow::anyhow!("ECDH: generate long-term key failed: {e}"))?,
+    );
 
-    // 敏感数据使用后立即清零
-    psk.zeroize();
-
-    let rc_config = Arc::new(config);
     let config = ServerConfig::new(0xFFFFFFFF, VSOCK_PORT, CHUNK_SIZE as u32, false);
     let mut manager = ServerManager::new(config);
     manager.start()?;
@@ -118,10 +132,43 @@ pub fn run_vsock_server(registry: Arc<TaRegistry>) -> anyhow::Result<()> {
     loop {
         let server = manager.accept()?;
         thread::spawn({
-            let registry = registry.clone();
-            let config = rc_config.clone();
+            let registry_arc = Arc::clone(&registry);
+            let entropy_arc = Arc::clone(&entropy);
+            let cipher_suites_arc = Arc::clone(&cipher_suites);
+            let psk_ctx_arc = Arc::clone(&psk_ctx);
             move || {
-                if let Err(e) = handle_vsock_request(server, registry.clone(), config) {
+                let rng = CtrDrbg::new(entropy_arc, None).expect("create TLS RNG");
+                let mut crypto_rng = new_crypto_rng().expect("create crypto RNG");
+
+                // ECDH 密钥协商（在 VSOCK 上，TLS 握手之前）
+                let mut transport = VirgeServerTransport(server);
+                let (psk, psk_identity) =
+                    match psk_ctx_arc.negotiate(&mut transport, &mut crypto_rng) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            eprintln!("ECDH 密钥协商失败：{e}");
+                            return;
+                        }
+                    };
+                let stream = transport.0;
+
+                // 创建 per-connection TLS 配置（必须在循环内，不能在 loop 外面）。
+                // 原因：每个连接通过 ECDH 协商出唯一的 PSK，
+                // config.set_psk() 绑定的是当前连接的专属密钥，
+                // 跨连接复用会导致所有连接使用同一个 PSK，失去前向安全性。
+                let mut config = Config::new(Endpoint::Server, Transport::Stream, Preset::Default);
+                config
+                    .set_min_version(Version::Tls1_2)
+                    .expect("set min version");
+                config
+                    .set_max_version(Version::Tls1_2)
+                    .expect("set max version");
+                config.set_ciphersuites(cipher_suites_arc);
+                config.set_rng(Arc::new(rng));
+                config.set_psk(&*psk, psk_identity).expect("set PSK");
+
+                if let Err(e) = handle_vsock_request(stream, registry_arc.clone(), Arc::new(config))
+                {
                     eprintln!("Failed to handle vsock request: {:?}", e);
                 }
             }
@@ -134,7 +181,7 @@ pub fn handle_vsock_request(
     registry: Arc<TaRegistry>,
     config: Arc<Config>,
 ) -> anyhow::Result<()> {
-    let mut ctx = Context::new(config.clone());
+    let mut ctx = Context::new(config);
     ctx.establish(stream, None)?;
     if vsock_server_debug_enabled() {
         eprintln!("[TEE] handle_vsock_request: TLS established, entering read loop");
@@ -169,11 +216,7 @@ pub fn handle_vsock_request(
             );
         }
 
-        handle_packet(
-            &mut ctx,
-            hdr,
-            registry.as_ref(),
-        )?;
+        handle_packet(&mut ctx, hdr, registry.as_ref())?;
 
         //thread::sleep(std::time::Duration::from_millis(1));
     }
@@ -191,6 +234,13 @@ fn handle_packet(
     header: PacketHeader,
     registry: &TaRegistry,
 ) -> anyhow::Result<()> {
+    // 基本校验：防止异常的 data_size 导致 OOM
+    if header.data_size as usize > MAX_MESSAGE_SIZE {
+        return Err(anyhow::anyhow!(
+            "invalid packet header: data_size too large"
+        ));
+    }
+
     let mut data = vec![0u8; header.data_size as usize];
     recv_data(ctx, &mut data)?;
 
@@ -373,9 +423,7 @@ fn handle_packet(
                 eprintln!(
                     "[TEE] handle_packet: CloseSession global_session_id={global_session_id}"
                 );
-                eprintln!(
-                    "[vsock-mgr CloseSession] enter global_session_id={global_session_id}"
-                );
+                eprintln!("[vsock-mgr CloseSession] enter global_session_id={global_session_id}");
             }
             let Some(entry) = registry.session_entry(global_session_id) else {
                 if vsock_close_debug() {
@@ -515,9 +563,10 @@ impl TaForwardSemaphore {
             .value()
             .clone();
 
-        let mut guard = slot.inner.lock().map_err(|_| {
-            std::io::Error::new(ErrorKind::Other, "forward semaphore poisoned")
-        })?;
+        let mut guard = slot
+            .inner
+            .lock()
+            .map_err(|_| std::io::Error::new(ErrorKind::Other, "forward semaphore poisoned"))?;
 
         loop {
             if guard.in_flight < guard.max {
@@ -541,9 +590,7 @@ impl TaForwardSemaphore {
             let wait_result = slot
                 .cv
                 .wait_timeout(guard, Duration::from_secs(FORWARD_SEMAPHORE_TIMEOUT_SECS))
-                .map_err(|_| {
-                    std::io::Error::new(ErrorKind::Other, "forward semaphore poisoned")
-                })?;
+                .map_err(|_| std::io::Error::new(ErrorKind::Other, "forward semaphore poisoned"))?;
             if wait_result.1.timed_out() {
                 return Err(std::io::Error::new(
                     ErrorKind::TimedOut,
@@ -732,7 +779,10 @@ mod tests {
         let would_block = io::Error::new(ErrorKind::WouldBlock, "would block");
         let other = io::Error::other("other");
 
-        assert_eq!(map_forward_error_to_result(&not_found), TEE_ERROR_ITEM_NOT_FOUND);
+        assert_eq!(
+            map_forward_error_to_result(&not_found),
+            TEE_ERROR_ITEM_NOT_FOUND
+        );
         assert_eq!(map_forward_error_to_result(&reset), TEE_ERROR_COMMUNICATION);
         assert_eq!(
             map_forward_error_to_result(&would_block),

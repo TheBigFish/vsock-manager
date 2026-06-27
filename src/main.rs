@@ -11,9 +11,8 @@ use std::{
 
 use crate::{ta_server::run_ta_server, vsock_server::run_vsock_server};
 
-mod psk;
-mod ta_server;
 mod ta_runtime;
+mod ta_server;
 mod vsock_define;
 mod vsock_server;
 
