@@ -150,8 +150,14 @@ impl TaRegistry {
         Ok(())
     }
 
-    pub fn prepare_instance_for_open(&self, uuid: &str) -> std::result::Result<InstanceRoute, EnsureTaError> {
-        crate::debug_log(&format!("pio START uuid={uuid} timeout_ms={}", self.register_timeout.as_millis()));
+    pub fn prepare_instance_for_open(
+        &self,
+        uuid: &str,
+    ) -> std::result::Result<InstanceRoute, EnsureTaError> {
+        crate::debug_log(&format!(
+            "pio START uuid={uuid} timeout_ms={}",
+            self.register_timeout.as_millis()
+        ));
         let deadline = Instant::now() + self.register_timeout;
         // 本次 OpenSession：当前 spawn 目标 instance_id，就绪后 Return（multi-instance 必需；其它路径也可填充无副作用）。
         let mut awaiting_instance_for_this_open: Option<u32> = None;
@@ -190,9 +196,10 @@ impl TaRegistry {
                             Decision::Wait
                         } else {
                             let instance_id = self.allocate_instance_id(entry);
-                            entry
-                                .instances
-                                .insert(instance_id, InstanceEntry::new_starting(uuid, instance_id));
+                            entry.instances.insert(
+                                instance_id,
+                                InstanceEntry::new_starting(uuid, instance_id),
+                            );
                             Decision::Spawn { instance_id }
                         }
                     } else {
@@ -228,17 +235,19 @@ impl TaRegistry {
                                     }
                                     awaiting_instance_for_this_open = None;
                                     let instance_id = self.allocate_instance_id(entry);
-                                    entry
-                                        .instances
-                                        .insert(instance_id, InstanceEntry::new_starting(uuid, instance_id));
+                                    entry.instances.insert(
+                                        instance_id,
+                                        InstanceEntry::new_starting(uuid, instance_id),
+                                    );
                                     Decision::Spawn { instance_id }
                                 }
                             }
                         } else {
                             let instance_id = self.allocate_instance_id(entry);
-                            entry
-                                .instances
-                                .insert(instance_id, InstanceEntry::new_starting(uuid, instance_id));
+                            entry.instances.insert(
+                                instance_id,
+                                InstanceEntry::new_starting(uuid, instance_id),
+                            );
                             if ta_runtime_debug_enabled() {
                                 eprintln!(
                                     "[vsock-manager ta_runtime] uuid={uuid} multi-instance: allocate instance {instance_id} → Spawn"
@@ -330,11 +339,16 @@ impl TaRegistry {
                     }
                     let child = match self.spawn_ta(uuid, instance_id) {
                         Ok(c) => {
-                            crate::debug_log(&format!("pio SPAWN_OK uuid={uuid} instance_id={instance_id} pid={}", c.id()));
+                            crate::debug_log(&format!(
+                                "pio SPAWN_OK uuid={uuid} instance_id={instance_id} pid={}",
+                                c.id()
+                            ));
                             c
                         }
                         Err(err) => {
-                            crate::debug_log(&format!("pio SPAWN_ERR uuid={uuid} instance_id={instance_id} err={err:?}"));
+                            crate::debug_log(&format!(
+                                "pio SPAWN_ERR uuid={uuid} instance_id={instance_id} err={err:?}"
+                            ));
                             // 决策阶段已插入 `Starting` 占位；spawn 失败必须回滚，否则会留下永远
                             // 不 Ready 的实例，后续 OpenSession 会误判 has_starting 而长时间阻塞在 Wait
                             //（bad_uuid 等对不存在 TA 的用例）。
@@ -403,8 +417,7 @@ impl TaRegistry {
             }
             self.cond.notify_all();
         }
-        self.virtual_sessions
-            .invalidate_instance(uuid, instance_id);
+        self.virtual_sessions.invalidate_instance(uuid, instance_id);
     }
 
     pub fn bind_session(
@@ -457,7 +470,9 @@ impl TaRegistry {
                     if ta_runtime_debug_enabled() {
                         eprintln!(
                             "[TEE] on_session_closed: uuid={uuid} instance_id={instance_id} active_sessions={} retire={retire} is_single={} keep_alive={}",
-                            inst.active_sessions, flags.is_single_instance, flags.is_instance_keep_alive
+                            inst.active_sessions,
+                            flags.is_single_instance,
+                            flags.is_instance_keep_alive
                         );
                     }
                     if retire {
@@ -582,14 +597,14 @@ impl VirtualSessionManager {
     }
 
     pub fn get(&self, global_session_id: u32) -> Option<Arc<SessionEntry>> {
-        self.mapping.get(&global_session_id).map(|v| v.value().clone())
+        self.mapping
+            .get(&global_session_id)
+            .map(|v| v.value().clone())
     }
 
     pub fn unbind(&self, global_session_id: u32) {
         if ta_runtime_debug_enabled() {
-            eprintln!(
-                "[TEE] VirtualSessionManager::unbind: global_session_id={global_session_id}"
-            );
+            eprintln!("[TEE] VirtualSessionManager::unbind: global_session_id={global_session_id}");
         }
         self.mapping.remove(&global_session_id);
     }
@@ -839,12 +854,7 @@ mod tests {
         let socket_path = "/tmp/binding-uuid.1.sock".to_string();
         let local_session_id = 88;
 
-        registry.mark_registered(
-            uuid,
-            1,
-            socket_path.clone(),
-            mk_flags(true, true, true),
-        );
+        registry.mark_registered(uuid, 1, socket_path.clone(), mk_flags(true, true, true));
         let global_session_id = registry
             .bind_session(uuid, 1, socket_path.clone(), local_session_id)
             .expect("bind should succeed");
@@ -989,12 +999,7 @@ mod tests {
         let registry = TaRegistry::from_env();
         let uuid = "ready-single-route";
         let socket_path = "/tmp/ready-single-route.12.sock".to_string();
-        registry.mark_registered(
-            uuid,
-            12,
-            socket_path.clone(),
-            mk_flags(true, true, true),
-        );
+        registry.mark_registered(uuid, 12, socket_path.clone(), mk_flags(true, true, true));
 
         let route = registry
             .prepare_instance_for_open(uuid)
@@ -1155,10 +1160,20 @@ mod tests {
 
         // Same local session id on two different instances must map to different global ids.
         let gsid_1 = registry
-            .bind_session(uuid, 1, "/tmp/route-no-cross-instance.1.sock".to_string(), 42)
+            .bind_session(
+                uuid,
+                1,
+                "/tmp/route-no-cross-instance.1.sock".to_string(),
+                42,
+            )
             .expect("bind instance 1 should succeed");
         let gsid_2 = registry
-            .bind_session(uuid, 2, "/tmp/route-no-cross-instance.2.sock".to_string(), 42)
+            .bind_session(
+                uuid,
+                2,
+                "/tmp/route-no-cross-instance.2.sock".to_string(),
+                42,
+            )
             .expect("bind instance 2 should succeed");
 
         assert_ne!(gsid_1, gsid_2);

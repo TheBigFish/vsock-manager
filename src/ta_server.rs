@@ -11,8 +11,8 @@ use std::{
 
 use postcard::from_bytes;
 
-use teec_protocol::TARequest;
 use crate::ta_runtime::{TaFlags, TaRegistry};
+use teec_protocol::TARequest;
 
 const SERVER_SOCKET_PATH: &str = "/tmp/server.sock";
 
@@ -38,10 +38,7 @@ pub fn run_ta_server(registry: Arc<TaRegistry>) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn handle_ta_request(
-    mut stream: UnixStream,
-    registry: Arc<TaRegistry>,
-) -> anyhow::Result<()> {
+pub fn handle_ta_request(mut stream: UnixStream, registry: Arc<TaRegistry>) -> anyhow::Result<()> {
     println!("New TA connection established");
 
     let mut buf = vec![0u8; 1024];
